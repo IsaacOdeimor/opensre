@@ -193,12 +193,17 @@ def _normalize_shell_command(command: str) -> str | None:
 
 def _first_command_token(command: str) -> str | None:
     try:
-        tokens = shlex.split(command, posix=True)
+        tokens = shlex.split(command, posix=os.name != "nt")
     except ValueError:
-        return None
+        # `shlex` in POSIX mode treats `\` as an escape character, which breaks
+        # common Windows paths such as `cd C:\` (trailing backslash).
+        try:
+            tokens = shlex.split(command, posix=False)
+        except ValueError:
+            return None
     if not tokens:
         return None
-    return tokens[0]
+    return _strip_wrapping_quotes(tokens[0])
 
 
 def _looks_like_direct_shell_command(text: str) -> bool:
@@ -437,8 +442,9 @@ def _run_shell_command(command: str, session: ReplSession, console: Console) -> 
 
 
 def _run_cd_command(command: str, session: ReplSession, console: Console) -> None:
+    is_windows = os.name == "nt"
     try:
-        tokens = shlex.split(command, posix=True)
+        tokens = shlex.split(command, posix=not is_windows)
     except ValueError as exc:
         console.print(f"[red]cd failed:[/red] {escape(str(exc))}")
         session.record("shell", command, ok=False)
@@ -449,7 +455,11 @@ def _run_cd_command(command: str, session: ReplSession, console: Console) -> Non
         session.record("shell", command, ok=False)
         return
 
-    target = Path(tokens[1]).expanduser() if len(tokens) == 2 else Path.home()
+    target_value = _strip_wrapping_quotes(tokens[1]) if len(tokens) == 2 and is_windows else None
+    if len(tokens) == 2:
+        target = Path(target_value or tokens[1]).expanduser()
+    else:
+        target = Path.home()
     try:
         os.chdir(target)
     except Exception as exc:  # noqa: BLE001

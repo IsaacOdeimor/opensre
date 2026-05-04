@@ -200,6 +200,12 @@ def test_direct_shell_command_plans_shell_action() -> None:
     assert plan_terminal_tasks("cd /tmp") == ["shell"]
 
 
+def test_windows_cd_trailing_backslash_plans_shell_action(monkeypatch: object) -> None:
+    monkeypatch.setattr(agent_actions.os, "name", "nt")
+
+    assert plan_terminal_tasks("cd C:\\") == ["shell"]
+
+
 def test_sample_alert_launch_plans_sample_alert_action() -> None:
     assert plan_terminal_tasks("okay launch a simple alert") == ["sample_alert"]
     assert plan_cli_actions("okay launch a simple alert") == []
@@ -431,6 +437,81 @@ def test_execute_cli_actions_routes_cd_case_insensitive(monkeypatch: object) -> 
 
     assert execute_cli_actions("CD /tmp", session, console) is True
     assert cd_calls == ["CD /tmp"]
+
+
+def test_execute_cli_actions_cd_handles_windows_paths(monkeypatch: object) -> None:
+    changed_directories: list[Path] = []
+
+    def _fake_chdir(target: Path) -> None:
+        changed_directories.append(target)
+
+    def _fail_run(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("subprocess.run should not be used for cd")
+
+    monkeypatch.setattr(agent_actions.os, "name", "nt")
+    monkeypatch.setattr(agent_actions.os, "chdir", _fake_chdir)
+    monkeypatch.setattr(agent_actions.subprocess, "run", _fail_run)
+
+    session = ReplSession()
+    console, _ = _capture()
+
+    message = r"cd C:\Users\Alice"
+    assert execute_cli_actions(message, session, console) is True
+    assert changed_directories == [Path(r"C:\Users\Alice")]
+    assert session.history == [
+        {"type": "cli_agent", "text": message, "ok": True},
+        {"type": "shell", "text": message, "ok": True},
+    ]
+
+
+def test_execute_cli_actions_cd_strips_quotes_on_windows(monkeypatch: object) -> None:
+    changed_directories: list[Path] = []
+
+    def _fake_chdir(target: Path) -> None:
+        changed_directories.append(target)
+
+    def _fail_run(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("subprocess.run should not be used for cd")
+
+    monkeypatch.setattr(agent_actions.os, "name", "nt")
+    monkeypatch.setattr(agent_actions.os, "chdir", _fake_chdir)
+    monkeypatch.setattr(agent_actions.subprocess, "run", _fail_run)
+
+    session = ReplSession()
+    console, _ = _capture()
+
+    message = r'run `cd "C:\Users\Alice"`'
+    assert execute_cli_actions(message, session, console) is True
+    assert changed_directories == [Path(r"C:\Users\Alice")]
+    assert session.history == [
+        {"type": "cli_agent", "text": message, "ok": True},
+        {"type": "shell", "text": 'cd "C:\\Users\\Alice"', "ok": True},
+    ]
+
+
+def test_execute_cli_actions_cd_handles_trailing_backslash(monkeypatch: object) -> None:
+    changed_directories: list[Path] = []
+
+    def _fake_chdir(target: Path) -> None:
+        changed_directories.append(target)
+
+    def _fail_run(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("subprocess.run should not be used for cd")
+
+    monkeypatch.setattr(agent_actions.os, "name", "nt")
+    monkeypatch.setattr(agent_actions.os, "chdir", _fake_chdir)
+    monkeypatch.setattr(agent_actions.subprocess, "run", _fail_run)
+
+    session = ReplSession()
+    console, _ = _capture()
+
+    command = "cd C:\\"
+    assert execute_cli_actions(command, session, console) is True
+    assert changed_directories == [Path("C:\\")]
+    assert session.history == [
+        {"type": "cli_agent", "text": command, "ok": True},
+        {"type": "shell", "text": command, "ok": True},
+    ]
 
 
 def test_execute_cli_actions_records_shell_failure(monkeypatch: object) -> None:
